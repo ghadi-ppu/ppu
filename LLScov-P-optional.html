@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Least Squares Solution Calculator</title>
+    <style>
+        .matrix-input { width: 500px; height: 400px; }
+        .matrix { border-collapse: collapse; margin: 10px; }
+        .matrix td { padding: 5px; border: 1px solid #999; text-align: center; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Least Squares Solution Calculator</h1>
+     <h2>By: Dr. Ghadi Zakrneh</h2>
+     <a href="mailto:ghadi@ppu.edu ">Send email: ghadi@ppu.edu</a> <br>
+    <a href="https://staff.ppu.edu/ghadi">staff.ppu.edu/ghadi</a>
+    <div>
+        <h3>Design Matrix (A):</h3>
+        <textarea id="A" class="matrix-input" placeholder="Enter matrix rows separated by newlines
+Example:
+1 2
+3 4
+5 6"></textarea>
+    </div>
+
+    <div>
+        <h3>Observations Matrix (L):</h3>
+        <textarea id="l" class="matrix-input" placeholder="Enter column vector
+Example:
+7
+8
+9"></textarea>
+    </div>
+
+    <div>
+        <h3>Weight Matrix (W) - Optional:</h3>
+        <textarea id="P" class="matrix-input" placeholder="Enter square matrix (leave blank for identity)
+Example:
+1 0 0
+0 1 0
+0 0 1"></textarea>
+    </div>
+
+    <div>
+        <label>Decimal Digits: <input type="number" id="decimals" value="5" min="0"></label>
+        <button onclick="calculate()">Calculate</button>
+        <button onclick="clearAll()">Clear</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        function parseMatrix(text) {
+            return text.trim().split('\n').map(row => 
+                row.trim().split(/[,\s]+/).map(Number)
+            );
+        }
+
+        function transpose(m) {
+            return m[0].map((_, i) => m.map(row => row[i]));
+        }
+
+        function multiply(a, b) {
+            const rowsA = a.length, colsA = a[0].length;
+            const rowsB = b.length, colsB = b[0].length;
+            if(colsA !== rowsB) throw new Error('Matrix dimensions mismatch');
+            
+            const result = Array.from({length: rowsA}, () => 
+                Array.from({length: colsB}, () => 0));
+            
+            for(let i = 0; i < rowsA; i++) {
+                for(let j = 0; j < colsB; j++) {
+                    for(let k = 0; k < colsA; k++) {
+                        result[i][j] += a[i][k] * b[k][j];
+                    }
+                }
+            }
+            return result;
+        }
+
+        function invert(matrix) {
+            const n = matrix.length;
+            const aug = matrix.map((row, i) => 
+                [...row, ...Array(n).fill(0).map((_, j) => i === j ? 1 : 0)]
+            );
+            
+            for(let i = 0; i < n; i++) {
+                let pivot = i;
+                for(let j = i; j < n; j++) {
+                    if(Math.abs(aug[j][i]) > Math.abs(aug[pivot][i])) pivot = j;
+                }
+                if(Math.abs(aug[pivot][i]) < 1e-10) return null;
+                [aug[i], aug[pivot]] = [aug[pivot], aug[i]];
+                
+                const divisor = aug[i][i];
+                for(let j = i; j < 2*n; j++) aug[i][j] /= divisor;
+                
+                for(let j = 0; j < n; j++) {
+                    if(j !== i) {
+                        const factor = aug[j][i];
+                        for(let k = i; k < 2*n; k++) aug[j][k] -= factor * aug[i][k];
+                    }
+                }
+            }
+            return aug.map(row => row.slice(n));
+        }
+
+        function identityMatrix(n) {
+            return Array.from({length: n}, (_, i) => 
+                Array.from({length: n}, (_, j) => i === j ? 1 : 0)
+            );
+        }
+
+        function formatMatrix(matrix, decimals) {
+            return `<table class="matrix">${
+                matrix.map(row => `<tr>${
+                    row.map(v => `<td>${v.toFixed(decimals)}</td>`).join('')
+                }</tr>`).join('')
+            }</table>`;
+        }
+
+        function calculate() {
+            try {
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = '';
+                
+                const decimals = parseInt(document.getElementById('decimals').value) || 3;
+                const A = parseMatrix(document.getElementById('A').value);
+                const l = parseMatrix(document.getElementById('l').value);
+                const P_input = document.getElementById('P').value.trim();
+                const P = P_input ? parseMatrix(P_input) : identityMatrix(l.length);
+
+                // Validate dimensions
+                const m = A.length, n = A[0].length;
+                if(m === 0 || n === 0) throw new Error('Invalid design matrix');
+                if(l.length !== m || l[0].length !== 1) throw new Error('Observations matrix must be m x 1');
+                if(P.length !== m || P[0].length !== m) throw new Error('Weight matrix must be m x m');
+
+                const A_T = transpose(A);
+                const N = multiply(multiply(A_T, P), A);
+                const N_inv = invert(N);
+                if(!N_inv) throw new Error('Normal matrix is singular');
+
+                const rhs = multiply(multiply(A_T, P), l);
+                const x = multiply(N_inv, rhs);
+
+                const Ax = multiply(A, x);
+                const v = Ax.map((row, i) => [row[0] - l[i][0]]);
+                const v_T = transpose(v);
+                const vTPv = multiply(multiply(v_T, P), v)[0][0];
+                const dof = m - n;
+                const refVar = vTPv / dof;
+                const refStd = Math.sqrt(refVar);
+
+                const covUnknowns = N_inv.map(row => row.map(v => v * refVar));
+                const stdUnknowns = covUnknowns.map((row, i) => [Math.sqrt(row[i])]);
+                const adjObs = Ax;
+                const covAdjObs = multiply(multiply(A, covUnknowns), transpose(A));
+                const stdAdjObs = covAdjObs.map((row, i) => [Math.sqrt(row[i])]);
+
+                // Display results
+                const fmt = (num) => num.toFixed(decimals);
+                resultsDiv.innerHTML = `
+                    <h2>Results</h2>
+                    <h3>Unknowns Matrix (X):</h3>${formatMatrix(x, decimals)}
+                    
+                    <h3>Residuals Matrix (V):</h3>${formatMatrix(v, decimals)}
+                    
+                    <h3>Normal Equations Matrix (N):</h3>${formatMatrix(N, decimals)}
+                    
+                    <h3>Inverse of Normal Matrix (N⁻¹) or (Qxx):</h3>${formatMatrix(N_inv, decimals)}
+                    
+                    <h3>Reference Variance (s0^2): ${fmt(refVar)}</h3>
+                    <h3>Reference Standard Deviation(s0): ${fmt(refStd)}</h3>
+                    
+                    <h3>Covariance Matrix of Unknowns (Cxx):</h3>${formatMatrix(covUnknowns, decimals)}
+                    <h3>Standard Deviation of Unknowns:</h3>${formatMatrix(stdUnknowns, decimals)}
+                    
+                    <h3>Adjusted Observations:</h3>${formatMatrix(adjObs, decimals)}
+                    <h3>Covariance Matrix of Adjusted Observations(Cll):</h3>${formatMatrix(covAdjObs, decimals)}
+                    <h3>Standard Deviation of Adjusted Observations:</h3>${formatMatrix(stdAdjObs, decimals)}
+                `;
+            } catch (error) {
+                document.getElementById('results').innerHTML = 
+                    `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        function clearAll() {
+            document.getElementById('A').value = '';
+            document.getElementById('l').value = '';
+            document.getElementById('P').value = '';
+            document.getElementById('results').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
